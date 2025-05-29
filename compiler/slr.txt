@@ -1,0 +1,579 @@
+#include <bits/stdc++.h>
+using namespace std;
+
+struct Item
+{
+    string head;
+    vector<string> body;
+    int dotPos;
+};
+
+vector<pair<string, vector<string>>> grammar; 
+vector<vector<Item>> C;
+map<pair<int, string>, int> GOTO;
+map<pair<int, string>, string> ACTION;
+unordered_map<string, set<string>> FIRST, FOLLOW;
+string startSymbol;
+
+void inputGrammar()
+{
+    int n;
+    cout<<"Enter the number of production rules: ";
+    cin>>n;
+    
+    cin.ignore();
+    
+    cout<<"Enter production rules in the form A -> B C | D e  (space-separated):\n";
+    string rule;
+    for(int i=1; i<=n; i++)
+    {
+        getline(cin, rule);
+        //pos stores the first occurence of -> in rule
+        size_t pos = rule.find("->");
+        
+        string head, bodyLine;
+        for(int i=0; i<pos-1; i++)
+        head += rule[i]; //forming the head;
+        
+        bodyLine = rule.substr(pos+3);
+        
+        vector<string> productionRules;
+        
+        stringstream ss(bodyLine);
+        string body, token;
+        while(ss >> token) //>> is used to read something from the stringstream object
+        {
+            if(token == "|")
+            {
+                productionRules.push_back(body);
+                body.clear();
+                continue;
+            }
+            body += token + " ";
+        }
+        productionRules.push_back(body);
+        
+        grammar.push_back({head, productionRules});
+    }
+    
+    startSymbol = grammar[0].first;
+    string augmented = startSymbol + "'";
+    grammar.insert(grammar.begin(), {augmented, {startSymbol}});
+    startSymbol = augmented;
+}
+
+vector<string> splitPR(string prod)
+{
+    vector<string> symbols;
+    stringstream ss(prod);
+    string token;
+    while(ss >> token)
+        symbols.push_back(token);
+    return symbols;
+}
+
+bool areItemsEqual(Item& a, Item& b) 
+{
+    return a.head == b.head && a.body == b.body && a.dotPos == b.dotPos;
+}
+
+bool itemExists(vector<Item>& itemSet, Item& item)
+{
+    for(auto& i : itemSet)
+        if(areItemsEqual(i, item))
+            return true;
+    return false;
+}
+
+vector<Item> closure(vector<Item> I)
+{
+    vector<Item> J = I;
+    bool changed = true;
+
+    while(changed)
+    {
+        changed = false;
+
+        for(auto& item : J)
+        {
+            if(item.dotPos < item.body.size())
+            { //dot is not at the end
+                string B = item.body[item.dotPos];
+                //search for PR: B -> delta in grammar
+                for(auto& rule : grammar)
+                {
+                    if(rule.first != B)
+                        continue;
+                    for(auto& prod : rule.second)
+                    {
+                        vector<string> body = splitPR(prod);
+                        Item newItem = {B, body, 0};
+                        if(!itemExists(J, newItem))
+                        {
+                            J.push_back(newItem);
+                            changed = true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    return J;
+}
+
+vector<Item> findGOTO(const vector<Item>& I, const string& X)
+{
+    vector<Item> J; //empty itemSet
+
+    for(auto& item : I)
+    {
+        if(item.dotPos < item.body.size() && item.body[item.dotPos] == X)
+        { 
+            // A -> alpha . X beta
+            Item nextItem = item;
+            nextItem.dotPos++; //as we have moved the dot
+            J.push_back(nextItem);
+        }
+    }
+
+    return closure(J);
+}
+
+void constructCollection()
+{
+    Item start = {grammar[0].first, {grammar[0].second[0]}, 0};
+    //start: {S' -> .S}
+    vector<Item> I0 = closure({start});
+    C.push_back(I0); //C will initially contain I0
+    
+    //we will use queue to keep track of itemsets and add newly made itemsets
+    //this will continue till queue is not empty
+    //queue will store the state no.
+    queue<vector<Item>> q;
+    q.push(I0);
+
+    while(!q.empty())
+    {
+        vector<Item> I = q.front();
+        q.pop();
+
+        set<string> symbols;
+        for(auto& item : I)
+        {
+            if(item.dotPos < item.body.size())
+                symbols.insert(item.body[item.dotPos]);
+            //to keep track of what transitions can be made from I
+        }
+
+        for(auto& X : symbols)
+        {
+            vector<Item> gotoResult = findGOTO(I, X);
+            if(gotoResult.empty())
+                continue;
+
+            //to check whether gotoResult is present in C?
+            bool found = false; //to store state for GOTO[i,X]
+            for(auto& itemSet: C)
+            {
+                if(gotoResult.size() == itemSet.size())
+                {
+                    bool allMatch = true;
+                    for(auto& item : gotoResult)
+                    {
+                        if(itemExists(itemSet, item) == false)
+                        {
+                            allMatch = false;
+                            break;
+                        }
+                    }
+                    if(allMatch)
+                    {
+                        found = true;
+                        break;
+                    }
+                }
+            }
+
+            if(found == false)
+            {   //does not have GOTO[I,X]
+                C.push_back(gotoResult);
+                q.push(gotoResult);
+            }
+        }
+    }
+}
+
+void first(string sym)
+{
+    if(!(sym>="A"&&sym<="Z"))
+    {
+        FIRST[sym] = {sym};
+        return;
+    }
+    
+    for(auto& prod: grammar)
+    {
+        if(prod.first != sym)
+            continue;
+        for(auto& body: prod.second)
+        {
+            vector<string> symbols = splitPR(body);
+            if(symbols[0] == prod.first)//to avoid infinite recursion
+                continue;
+            bool allEpsilon = false;
+            int i=0, n=symbols.size();
+            do
+            {
+                if(FIRST.count(symbols[i]) == 0)
+                    first(symbols[i]);
+                set<string> tempFirst = FIRST[symbols[i]];
+                allEpsilon = false;
+                for(auto& s: tempFirst)
+                {
+                    if(s == "e")
+                        allEpsilon = true;
+                    else
+                        FIRST[sym].insert(s);
+                }
+                i++;
+            } while(i<n && allEpsilon);
+            if(allEpsilon)
+                FIRST[sym].insert("e");
+        }
+    }
+}
+
+void printFirstFollow()
+{
+    cout<<"FIRST:\n\n";
+    for(auto& pair: FIRST)
+    {
+        cout<<pair.first<<" = { ";
+        for(auto& sym: pair.second)
+            cout<<sym<<", ";
+        cout<<"}"<<endl;
+    }
+    
+    cout<<"FOLLOW:\n\n";
+    for(auto& pair: FOLLOW)
+    {
+        cout<<pair.first<<" = { ";
+        for(auto& sym: pair.second)
+            cout<<sym<<", ";
+        cout<<"}"<<endl;
+    }
+}
+
+void findFirst()
+{
+    unordered_set<string> set;
+    for(auto& prod: grammar)
+    {
+        set.insert(prod.first);
+        for(auto& body: prod.second)
+        {
+            vector<string> symbols = splitPR(body);
+            for(auto& sym: symbols)
+                set.insert(sym);
+        }
+    }
+    
+    for(auto& sym:set)
+    {
+        if(FIRST.count(sym) == 0)
+        first(sym);
+    }
+    
+    FIRST.erase("e");
+}
+
+void follow(string sym)
+{
+    if(sym == startSymbol)
+        FOLLOW[sym].insert("$");
+    
+    for(auto& prod: grammar)
+    {
+        string head = prod.first;
+        for(auto& body: prod.second)
+        {
+            vector<string> symbols = splitPR(body);
+            int pos = -1, i=0;
+            for(auto& s: symbols)
+            {
+                if(s == sym)
+                {
+                    pos = i;
+                    if(pos == symbols.size() - 1 && head != sym)
+                    {
+                        //add FIRSt(head) to FOLLOW(sym)
+                        follow(head);
+                        for(auto& c: FOLLOW[head])
+                            FOLLOW[sym].insert(c);
+                    }
+                    else
+                    {
+                        bool foundE = false;
+                        for(string c: FIRST[symbols[pos+1]])
+                        {
+                            if(c == "e")
+                                foundE = true;
+                            else
+                                FOLLOW[sym].insert(c);
+                        }
+                        if(foundE && sym != head)
+                        {
+                            follow(head);
+                            for(string c: FOLLOW[head])
+                                FOLLOW[sym].insert(c);
+                        }
+                    }
+                }
+                i++;
+            }
+        }
+    }
+}
+
+void findFollow()
+{
+    for(auto& prod: grammar)
+    {
+        if(FOLLOW.count(prod.first) == 0)
+        follow(prod.first);
+    }
+}
+
+void createTable()
+{
+    for(int i = 0; i < C.size(); i++)
+    {
+        for(auto& item : C[i])
+        {
+            // Case 1: Shift action: A ? a . a ß
+            if(item.dotPos < item.body.size())
+            {
+                string a = item.body[item.dotPos];
+                vector<Item> gotoResult = findGOTO(C[i], a);
+
+                // Check if gotoResult is already in C and find its index
+                int stateIndex = -1;
+                for(int j = 0; j < C.size(); ++j)
+                {
+                    if(gotoResult.size() == C[j].size()) {
+                        bool same = true;
+                        for(auto& itm : gotoResult)
+                        {
+                            if(!itemExists(C[j], itm))
+                            {
+                                same = false;
+                                break;
+                            }
+                        }
+                        if(same)
+                        {
+                            stateIndex = j;
+                            break;
+                        }
+                    }
+                }
+
+                if(stateIndex != -1 && (a < "A" || a > "Z"))
+                { // a is terminal
+                    ACTION[{i, a}] = "S" + to_string(stateIndex);
+                }
+            }
+
+            // Case 2: Reduce or Accept
+            else
+            {
+                if(item.head == startSymbol)
+                    ACTION[{i, "$"}] = "accept";
+                else
+                {
+                    string body;
+                    for(auto& sym : item.body)
+                        body += sym + " ";
+                    for(string b : FOLLOW[item.head]) {
+                        ACTION[{i, b}] = "R" + item.head + " -> " + body;
+                    }
+                }
+            }
+        }
+
+        // Now build the GOTO table for non-terminals
+        set<string> symbols;
+        for(auto& item : C[i])
+        {
+            if(item.dotPos < item.body.size())
+            {
+                string sym = item.body[item.dotPos];
+                if(sym >= "A" && sym <= "Z")
+                    symbols.insert(sym);
+            }
+        }
+
+        for(auto& X : symbols)
+        {
+            vector<Item> gotoResult = findGOTO(C[i], X);
+
+            // Check if gotoResult is in C and find its index
+            for (int j = 0; j < C.size(); ++j)
+            {
+                if (gotoResult.size() == C[j].size())
+                {
+                    bool same = true;
+                    for(auto& itm : gotoResult)
+                    {
+                        if (!itemExists(C[j], itm))
+                        {
+                            same = false;
+                            break;
+                        }
+                    }
+                    if(same) 
+                    {
+                        GOTO[{i, X}] = j;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+}
+
+void printParsingTable()
+{
+    set<string> terminals, nonTerminals;
+
+    for(auto& rule : grammar)
+    {
+        nonTerminals.insert(rule.first);
+        for(auto& prod : rule.second)
+        {
+            vector<string> symbols = splitPR(prod);
+            for(auto& sym : symbols)
+            {
+                if (sym >= "A" && sym <= "Z")
+                    nonTerminals.insert(sym);
+                else
+                    terminals.insert(sym);
+            }
+        }
+    }
+
+    terminals.insert("$");
+
+    cout << "\n=== ACTION TABLE ===\n";
+    cout << setw(10) << "State";
+    for(auto& term : terminals)
+        cout << setw(10) << term;
+    cout << endl;
+
+    for(int i = 0; i < C.size(); ++i)
+    {
+        cout << setw(10) << i;
+        for(auto& term : terminals)
+        {
+            string action = ACTION.count({i, term}) ? ACTION[{i, term}] : ".";
+            cout << setw(10) << action;
+        }
+        cout << endl;
+    }
+
+    cout << "\n=== GOTO TABLE ===\n";
+    cout << setw(10) << "State";
+    for(auto& nt : nonTerminals)
+        cout << setw(15) << nt;
+    cout << endl;
+
+    for(int i = 0; i < C.size(); ++i) {
+        cout << setw(10) << i;
+        for(auto& nt : nonTerminals) {
+            auto it = GOTO.find({i, nt});
+            if(it != GOTO.end())
+                cout << setw(15) << it->second;
+            else
+                cout << setw(15) << ".";
+        }
+        cout << endl;
+    }
+}
+
+void parseString(string input)
+{
+    input += " $"; // Append end marker
+    vector<string> tokens = splitPR(input);
+
+    stack<int> stateStack;
+    stack<string> symbolStack;
+
+    stateStack.push(0);
+    int ip = 0;
+
+    cout << "\n=== Parsing Steps ===\n";
+
+    while (true)
+    {
+        int currState = stateStack.top();
+        string currToken = tokens[ip];
+
+        string action = ACTION.count({currState, currToken}) ? ACTION[{currState, currToken}] : "";
+
+        if(action == "accept")
+        {
+            cout << "\nInput string is successfully parsed.\n";
+            break;
+        }
+
+        if(action.empty())
+        {
+            cout << "\nERROR: Parsing failed.\n";
+            break;
+        }
+
+        if(action[0] == 'S')
+        {
+            int nextState = stoi(action.substr(1));
+            symbolStack.push(currToken);
+            stateStack.push(nextState);
+            ip++;
+        }
+        else if(action[0] == 'R')
+        {
+            size_t pos = action.find("->");
+            string head = action.substr(1, pos - 2);
+            string bodyStr = action.substr(pos + 3);
+            vector<string> body = splitPR(bodyStr);
+            
+            cout << head << " -> " << bodyStr << endl;
+            
+            for(int i = 0; i < body.size(); ++i)
+            {
+                if (!symbolStack.empty()) symbolStack.pop();
+                if (!stateStack.empty()) stateStack.pop();
+            }
+
+            symbolStack.push(head);
+            int gotoState = GOTO[{stateStack.top(), head}];
+            stateStack.push(gotoState);
+        }
+    }
+}
+
+int main()
+{
+    inputGrammar();
+    findFirst();
+    findFollow();
+    printFirstFollow();
+    constructCollection();
+    createTable();
+    printParsingTable();
+    cout<<"Enter the string (space-separated): ";
+    string s;
+    getline(cin, s);
+    parseString(s);
+    return 0;
+}
