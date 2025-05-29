@@ -1,4 +1,5 @@
-%{#include <stdio.h>
+%{
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -132,3 +133,34 @@ int main() {
 
     return 0;
 }
+
+                                chk1.y
+
+
+
+
+%{
+#include "y.tab.h"
+%}
+
+%%
+"->"              { return ARROW; }
+[a-zA-Z=\*]+         { yylval.str = strdup(yytext); return ID; }
+[ \t\r]+          ;
+\n                { return '\n'; }
+.                 { return yytext[0]; }
+%%
+int yywrap() { return 1; }
+
+chk1.l
+
+
+
+vi lalr.l
+vi lalr.y
+yacc -d lalr.y
+lex lalr.l
+gcc y.tab.c lex.yy.c -o lalr
+./lalr
+
+
